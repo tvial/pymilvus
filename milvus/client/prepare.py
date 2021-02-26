@@ -1,6 +1,8 @@
 import copy
 import struct
 import ujson
+import array
+import io
 
 from .exceptions import ParamError
 
@@ -128,37 +130,46 @@ class Prepare:
                 if len(values) != _len:
                     raise ValueError("Length is not equal")
 
+        item_bytes = io.BytesIO()
         for entity in entities:
             entity_param.field_names.append(entity["field_name"])
             values = entity["field_values"]
             if isinstance(values, list):
                 if isinstance(values[0], int):
-                    entity_param.attr_data.add(int_value=values)
+                    typecode = 'l'
                 elif isinstance(values[0], float):
-                    entity_param.attr_data.add(double_value=values)
+                    typecode = 'f'
                 else:
                     raise ValueError("Field item must be int or float")
+                item_bytes.write(array.array(typecode, values).tobytes())
             else:
                 raise ValueError("Field values must be a list")
-        # entity_param.attr_records = bytes(item_bytes)
+
+        entity_param.attr_records = item_bytes.getvalue()
         entity_param.row_num = _len
+
         # vectors
         # entity.field_names.append(vector_field)
         for vector_entity in vector_entities:
             entity_param.field_names.append(vector_entity["field_name"])
-            vector_field = grpc_types.VectorFieldRecord()
+
+            vector_field = grpc_types.FieldValue()
+            vector_value = vector_field.vector_value.value
+
             vectors = vector_entity["field_values"]
             for vector in vectors:
+                row_record = grpc_types.RowRecord()
                 if isinstance(vector, bytes):
-                    vector_field.value.add(binary_data=vector)
+                    row_record.binary_data += vector
                 else:
-                    vector_field.value.add(float_data=vector)
-            entity_param.vector_data.append(vector_field)
+                    row_record.float_data.extend(vector)
+                vector_value.append(row_record)
+            entity_param.result_values.append(vector_field)
 
         h_param = grpc_types.HInsertParam(
             collection_name=collection_name,
             partition_tag=tag,
-            entity=entity_param
+            entities=entity_param
         )
 
         if ids:
